@@ -2,10 +2,11 @@
 
 Library implements segmented in-memory cache.
 
-[![Build Status](https://secure.travis-ci.org/fogfish/cache.svg?branch=master)](http://travis-ci.org/fogfish/cache)
-[![Coverage Status](https://coveralls.io/repos/github/fogfish/cache/badge.svg?branch=master)](https://coveralls.io/github/fogfish/cache?branch=master) 
-[![Hex.pm](https://img.shields.io/hexpm/v/cache.svg)](https://hex.pm/packages/cache)
-[![Hex Downloads](https://img.shields.io/hexpm/dt/cache.svg)](https://hex.pm/packages/cache)
+[![CI](https://github.com/xmppjingle/cache/actions/workflows/ci.yml/badge.svg)](https://github.com/xmppjingle/cache/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/xmppjingle/cache/graph/badge.svg)](https://codecov.io/gh/xmppjingle/cache)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Erlang/OTP](https://img.shields.io/badge/Erlang%2FOTP-25%2B-green.svg)](https://www.erlang.org/)
+[![GitHub issues](https://img.shields.io/github/issues/xmppjingle/cache.svg)](https://github.com/xmppjingle/cache/issues)
 
 ## Why cache?
 
