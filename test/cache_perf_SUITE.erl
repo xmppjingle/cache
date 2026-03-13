@@ -21,6 +21,14 @@ all() ->
       perf_concurrent_mixed
    ].
 
+init_per_suite(Config) ->
+   application:ensure_all_started(cache),
+   Config.
+
+end_per_suite(_Config) ->
+   application:stop(cache),
+   ok.
+
 %%%----------------------------------------------------------------------------
 %%%
 %%% Sequential performance tests
