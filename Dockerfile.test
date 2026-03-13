@@ -1,0 +1,10 @@
+FROM erlang:26-alpine
+
+RUN apk add --no-cache git make
+
+WORKDIR /app
+COPY . /app/
+
+RUN ./rebar3 compile
+
+CMD ["./rebar3", "ct", "--config=test/tests.config", "--cover", "--verbose"]

@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    command: ["./rebar3", "ct", "--config=test/tests.config", "--cover", "--verbose"]
+    volumes:
+      - test-logs:/app/_build/test/logs
+    environment:
+      - ERL_FLAGS=+P 1000000
+
+  benchmark:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    command: ["./rebar3", "ct", "--suite=test/cache_perf_SUITE", "--cover", "--verbose"]
+    environment:
+      - ERL_FLAGS=+P 1000000
+
+volumes:
+  test-logs:

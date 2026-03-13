@@ -142,13 +142,20 @@ is_expired_tail(Time, #heap{segments = Segments}) ->
 
 is_expired_head(#heap{cardinality = Card, memory = Mem, segments = Segments}) ->
    {_, Ref} = queue:last(Segments),
-   case 
-      {ets:info(Ref, size) >= Card, ets:info(Ref, memory) >= Mem}
-   of
-      {true, _} -> ooc;
-      {_, true} -> oom;
-      _         -> false
+   case is_over_cardinality(Ref, Card) of
+      true  -> ooc;
+      false ->
+         case is_over_memory(Ref, Mem) of
+            true  -> oom;
+            false -> false
+         end
    end.
+
+is_over_cardinality(_, undefined) -> false;
+is_over_cardinality(Ref, Card) -> ets:info(Ref, size) >= Card.
+
+is_over_memory(_, undefined) -> false;
+is_over_memory(Ref, Mem) -> ets:info(Ref, memory) >= Mem.
 
 heap_create_segment(#heap{type = Type, ttl = TTL, segments = Segments} = Heap) ->
    {LastTTL, _} = queue:last(Segments),

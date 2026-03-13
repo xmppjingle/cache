@@ -200,26 +200,13 @@ handle_cast(_, State) ->
 
 %%
 %%
-handle_info(check_heap, #cache{check = Check, heir = Heir, heap = Heap0} = State) ->
+handle_info(check_heap, #cache{check = Check} = State) ->
    erlang:send_after(Check, self(), check_heap),
-   case cache_heap:slip(Heir, Heap0) of
-      {ok, Heap1} ->
-         {noreply, State#cache{heap = Heap1}};
-      {Reason, Heap1} ->
-         cache_util:stats(State#cache.stats, {cache, State#cache.name, Reason}),
-         {noreply, State#cache{heap = Heap1}}
-   end;
+   {noreply, do_slip(State)};
 
-
-handle_info(evict_heap, #cache{evict = Evict, heir = Heir, heap = Heap0} = State) ->
+handle_info(evict_heap, #cache{evict = Evict} = State) ->
    erlang:send_after(Evict, self(), evict_heap),
-   case cache_heap:slip(Heir, Heap0) of
-      {ok, Heap1} ->
-         {noreply, State#cache{heap = Heap1}};
-      {Reason, Heap1} ->
-         cache_util:stats(State#cache.stats, {cache, State#cache.name, Reason}),
-         {noreply, State#cache{heap = Heap1}}
-   end;
+   {noreply, do_slip(State)};
 
 handle_info(_, S) ->
    {noreply, S}.
@@ -426,11 +413,11 @@ heap_remove(Key, {Tail, Head}) ->
    heap_remove(Key, Tail),
    heap_remove(Key, Head);
 
-heap_remove(Key, Heap) ->
-   lists:foreach(
-      fun({_, Id}) -> ets:delete(Id, Key) end, 
-      Heap
-   ).
+heap_remove(Key, [{_, Id} | Rest]) ->
+   ets:delete(Id, Key),
+   heap_remove(Key, Rest);
+heap_remove(_Key, []) ->
+   ok.
 
 %%
 %%
@@ -488,4 +475,15 @@ stats(_, #cache{stats = undefined}) ->
    ok;
 stats(X, #cache{stats = Stats, name = Name}) ->
    cache_util:stats(Stats, {cache, Name, X}).
+
+%%
+%% perform heap slip and update state
+do_slip(#cache{heir = Heir, heap = Heap0} = State) ->
+   case cache_heap:slip(Heir, Heap0) of
+      {ok, Heap1} ->
+         State#cache{heap = Heap1};
+      {Reason, Heap1} ->
+         cache_util:stats(State#cache.stats, {cache, State#cache.name, Reason}),
+         State#cache{heap = Heap1}
+   end.
 

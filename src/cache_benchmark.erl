@@ -55,7 +55,7 @@ run(get, KeyGen, _ValGen, Cache) ->
 
 run(remove, KeyGen, _ValGen, Cache) ->
    Key = KeyGen(),
-   case (catch cache:remove(cache, Key)) of
+   case (catch cache:remove(Cache, Key)) of
       ok -> {ok, Cache};
       E  -> {error, failure(r, Key, E), Cache}
    end.

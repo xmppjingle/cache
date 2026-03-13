@@ -48,8 +48,7 @@ mmul(X, Y) ->
 %%
 %%
 now() ->
-   {Mega, Sec, _} = os:timestamp(),
-   Mega * 1000000 + Sec.   
+   erlang:system_time(second).
 
 %%
 %% 
