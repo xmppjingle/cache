@@ -12,7 +12,11 @@ all() ->
       compare_sequential_put,
       compare_sequential_get,
       compare_sequential_mixed,
-      compare_concurrent_mixed
+      compare_concurrent_mixed,
+      compare_serde_simple_tuple,
+      compare_serde_nested_map,
+      compare_serde_large_proplist,
+      compare_serde_mixed_record_like
    ].
 
 init_per_suite(Config) ->
@@ -228,6 +232,139 @@ compare_concurrent_mixed(_Config) ->
    ct:pal("  Redis:         ~9w ops/sec  (~6w us, ~p ops)", [RedisOps, RedisTime, RedisTotalOps]),
    ct:pal("  cache/Redis:   ~.2fx faster", [CacheOps / max(RedisOps, 1)]),
    ct:pal("  ETS/cache:     ~.2fx faster", [EtsOps / max(CacheOps, 1)]),
+   ok.
+
+%%%----------------------------------------------------------------------------
+%%%
+%%% Serialization cost comparison tests
+%%%
+%%% cache stores native Erlang terms directly in ETS (zero serde).
+%%% Redis requires term_to_binary/binary_to_term for any Erlang term.
+%%% These tests measure the real-world cost of that difference.
+%%%
+%%%----------------------------------------------------------------------------
+
+compare_serde_simple_tuple(_Config) ->
+   N = 5000,
+   MakeVal = fun(I) -> {user, I, <<"alice">>, {role, admin}, [read, write, delete]} end,
+   serde_bench("Simple Tuple ({user, id, name, role, perms})", N, MakeVal).
+
+compare_serde_nested_map(_Config) ->
+   N = 5000,
+   MakeVal = fun(I) ->
+      #{id => I,
+        name => <<"test_user">>,
+        metadata => #{created => {2026, 3, 13},
+                      tags => [erlang, cache, performance],
+                      settings => #{theme => dark, lang => en}},
+        scores => lists:seq(1, 20)}
+   end,
+   serde_bench("Nested Map (3 levels, lists, tuples)", N, MakeVal).
+
+compare_serde_large_proplist(_Config) ->
+   N = 2000,
+   MakeVal = fun(I) ->
+      [{id, I},
+       {name, <<"benchmark_entry">>},
+       {tags, [<<"erlang">>, <<"otp">>, <<"ets">>, <<"cache">>]},
+       {headers, [{<<"content-type">>, <<"application/json">>},
+                  {<<"x-request-id">>, integer_to_binary(I)},
+                  {<<"authorization">>, <<"Bearer tok_abc123">>}]},
+       {body, #{payload => binary:copy(<<"x">>, 200),
+                timestamp => erlang:system_time(millisecond),
+                flags => {true, false, true, undefined}}},
+       {history, [{action, created}, {action, updated}, {action, verified}]}]
+   end,
+   serde_bench("Large Proplist (HTTP-like request, ~300 bytes serialized)", N, MakeVal).
+
+compare_serde_mixed_record_like(_Config) ->
+   N = 5000,
+   MakeVal = fun(I) ->
+      {session, I,
+       <<"sess_", (integer_to_binary(I))/binary>>,
+       erlang:system_time(millisecond),
+       [{ip, {192, 168, 1, I rem 255}},
+        {ua, <<"Mozilla/5.0">>},
+        {geo, {37.7749, -122.4194}}],
+       active}
+   end,
+   serde_bench("Record-like Tuple (session with IP, geo, timestamps)", N, MakeVal).
+
+serde_bench(Label, N, MakeVal) ->
+   Values = [MakeVal(I) || I <- lists:seq(1, N)],
+   SampleVal = hd(Values),
+   SerializedSize = byte_size(term_to_binary(SampleVal)),
+
+   %% --- Measure serialization cost alone ---
+   {SerdeTime, _} = timer:tc(fun() ->
+      lists:foreach(fun(V) ->
+         Bin = term_to_binary(V),
+         _ = binary_to_term(Bin)
+      end, Values)
+   end),
+   SerdeOps = N * 1000000 div max(SerdeTime, 1),
+
+   %% --- cache library (zero serde) ---
+   {ok, Cache} = cache:start_link([{n, 10}, {ttl, 600}]),
+   {CachePutTime, _} = timer:tc(fun() ->
+      lists:foldl(fun(V, I) ->
+         ok = cache:put(Cache, I, V),
+         I + 1
+      end, 1, Values)
+   end),
+   {CacheGetTime, _} = timer:tc(fun() ->
+      lists:foreach(fun(I) ->
+         _ = cache:get(Cache, I)
+      end, lists:seq(1, N))
+   end),
+   cache:drop(Cache),
+   CachePutOps = N * 1000000 div max(CachePutTime, 1),
+   CacheGetOps = N * 1000000 div max(CacheGetTime, 1),
+   CacheRoundTrip = CachePutTime + CacheGetTime,
+   CacheRtOps = N * 1000000 div max(CacheRoundTrip, 1),
+
+   %% --- Redis with term_to_binary/binary_to_term (realistic Erlang usage) ---
+   {RedisPutTime, _} = timer:tc(fun() ->
+      Commands = lists:map(fun({I, V}) ->
+         Bin = base64:encode(term_to_binary(V)),
+         K = integer_to_list(I),
+         ["SET ", K, " ", Bin, "\r\n"]
+      end, lists:zip(lists:seq(1, N), Values)),
+      redis_pipe(Commands)
+   end),
+   {RedisGetTime, _} = timer:tc(fun() ->
+      %% For a fair read comparison, we do individual GETs with deserialization
+      lists:foreach(fun(I) ->
+         K = integer_to_list(I),
+         Result = os:cmd("redis-cli GET " ++ K),
+         %% Strip trailing newline from redis-cli output
+         Trimmed = string:trim(Result, trailing, "\n"),
+         case Trimmed of
+            "" -> ok;
+            B  -> _ = binary_to_term(base64:decode(list_to_binary(B)))
+         end
+      end, lists:seq(1, min(N, 500)))
+   end),
+   RedisGetN = min(N, 500),
+   RedisPutOps = N * 1000000 div max(RedisPutTime, 1),
+   RedisGetOps = RedisGetN * 1000000 div max(RedisGetTime, 1),
+   RedisRoundTrip = RedisPutTime + (RedisGetTime * N div RedisGetN),
+   RedisRtOps = N * 1000000 div max(RedisRoundTrip, 1),
+
+   ct:pal("~n=== Serialization Cost: ~s ===", [Label]),
+   ct:pal("  Serialized size:       ~p bytes per value", [SerializedSize]),
+   ct:pal("  Serde only (encode+decode): ~9w ops/sec (~6w us)", [SerdeOps, SerdeTime]),
+   ct:pal("  ---"),
+   ct:pal("  cache PUT (no serde):  ~9w ops/sec  (~6w us)", [CachePutOps, CachePutTime]),
+   ct:pal("  cache GET (no serde):  ~9w ops/sec  (~6w us)", [CacheGetOps, CacheGetTime]),
+   ct:pal("  cache round-trip:      ~9w ops/sec  (~6w us)", [CacheRtOps, CacheRoundTrip]),
+   ct:pal("  ---"),
+   ct:pal("  Redis PUT (with serde):~9w ops/sec  (~6w us)", [RedisPutOps, RedisPutTime]),
+   ct:pal("  Redis GET (with serde):~9w ops/sec  (~6w us, ~p sampled)", [RedisGetOps, RedisGetTime, RedisGetN]),
+   ct:pal("  Redis round-trip (est):~9w ops/sec  (~6w us)", [RedisRtOps, RedisRoundTrip]),
+   ct:pal("  ---"),
+   ct:pal("  cache/Redis round-trip: ~.2fx faster", [CacheRtOps / max(RedisRtOps, 1)]),
+   os:cmd("redis-cli flushdb"),
    ok.
 
 %%%----------------------------------------------------------------------------
